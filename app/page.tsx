@@ -10,10 +10,18 @@ import { cs } from "date-fns/locale";
 
 export const dynamic = "force-dynamic";
 
+interface ChartDataPoint {
+  time: string;
+  timestamp: Date;
+  poolCount?: number;
+  wellnessCount?: number;
+  [key: string]: string | number | Date | undefined;
+}
+
 export default async function Home({
   searchParams,
 }: {
-  searchParams: { date?: string; compare?: string };
+  searchParams: Promise<{ date?: string; compare?: string }>;
 }) {
   const { date, compare } = await searchParams;
 
@@ -76,7 +84,7 @@ export default async function Home({
   };
 
   // Map keyed by time "HH:mm"
-  const chartDataMap = new Map<string, any>();
+  const chartDataMap = new Map<string, ChartDataPoint>();
 
   // Initialize with main data
   dailyData.forEach((record) => {
