@@ -1,0 +1,15 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model OccupancyRecord {
+  id            Int      @id @default(autoincrement())
+  timestamp     DateTime @default(now())
+  poolCount     Int
+  wellnessCount Int
+}

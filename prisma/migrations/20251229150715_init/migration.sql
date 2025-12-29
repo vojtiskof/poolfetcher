@@ -1,0 +1,7 @@
+-- CreateTable
+CREATE TABLE "OccupancyRecord" (
+    "id" INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+    "timestamp" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "poolCount" INTEGER NOT NULL,
+    "wellnessCount" INTEGER NOT NULL
+);

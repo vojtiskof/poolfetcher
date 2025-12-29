@@ -1,65 +1,212 @@
-import Image from "next/image";
+import { prisma } from "@/lib/prisma";
+import { CurrentStatus } from "@/components/CurrentStatus";
+import { OccupancyChart, ComparisonSeries } from "@/components/OccupancyChart";
+import { DateFilter } from "@/components/DateFilter";
+import { StatsSection } from "@/components/StatsSection";
+import { DataTable } from "@/components/DataTable";
+import { HistorySidebar } from "@/components/HistorySidebar";
+import { startOfDay, endOfDay, subDays, format } from "date-fns";
+import { cs } from "date-fns/locale";
 
-export default function Home() {
+export const dynamic = "force-dynamic";
+
+export default async function Home({
+  searchParams,
+}: {
+  searchParams: { date?: string; compare?: string };
+}) {
+  const { date, compare } = await searchParams;
+
+  const targetDate = date ? new Date(date) : new Date();
+  const validDate = isNaN(targetDate.getTime()) ? new Date() : targetDate;
+
+  const start = startOfDay(validDate);
+  const end = endOfDay(validDate);
+
+  // 1. Fetch latest Record
+  const latestRecord = await prisma.occupancyRecord.findFirst({
+    orderBy: { timestamp: "desc" },
+  });
+
+  // 2. Fetch Daily Data (Main Chart)
+  const dailyData = await prisma.occupancyRecord.findMany({
+    where: {
+      timestamp: {
+        gte: start,
+        lte: end,
+      },
+    },
+    orderBy: {
+      timestamp: "asc",
+    },
+  });
+
+  // 3. Fetch Comparison Data
+  const compareDates = compare ? compare.split(",") : [];
+  const comparisonData: { date: string; records: typeof dailyData }[] = [];
+
+  for (const dateStr of compareDates) {
+    const compDate = new Date(dateStr);
+    if (!isNaN(compDate.getTime())) {
+      const compStart = startOfDay(compDate);
+      const compEnd = endOfDay(compDate);
+      const records = await prisma.occupancyRecord.findMany({
+        where: {
+          timestamp: {
+            gte: compStart,
+            lte: compEnd,
+          },
+        },
+        orderBy: { timestamp: "asc" },
+      });
+      comparisonData.push({ date: dateStr, records });
+    }
+  }
+
+  // 4. Merge Data for Chart
+  // Map keyed by time "HH:mm"
+  const chartDataMap = new Map<string, any>();
+
+  // Initialize with main data
+  dailyData.forEach((record) => {
+    const time = format(record.timestamp, "HH:mm");
+    chartDataMap.set(time, {
+      time,
+      timestamp: record.timestamp,
+      poolCount: record.poolCount,
+      wellnessCount: record.wellnessCount,
+    });
+  });
+
+  // Merge comparison data
+  const colors = ["#f59e0b", "#8b5cf6", "#10b981", "#ef4444"];
+
+  const comparisonSeries: ComparisonSeries[] = [];
+
+  comparisonData.forEach((item, index) => {
+    const seriesId = item.date;
+    const color = colors[index % colors.length];
+    const label = format(new Date(item.date), "d.M.", { locale: cs });
+
+    comparisonSeries.push({ id: seriesId, label, color });
+
+    item.records.forEach((record) => {
+      const time = format(record.timestamp, "HH:mm");
+      const existing = chartDataMap.get(time) || {
+        time,
+        timestamp: record.timestamp,
+      };
+
+      chartDataMap.set(time, {
+        ...existing,
+        [`pool_${seriesId}`]: record.poolCount,
+        [`wellness_${seriesId}`]: record.wellnessCount,
+      });
+    });
+  });
+
+  // Sort by time
+  const mergedChartData = Array.from(chartDataMap.values()).sort((a, b) =>
+    a.time.localeCompare(b.time)
+  );
+
+  // 5. Fetch History Stats (Last 14 days)
+  const historyStart = startOfDay(subDays(new Date(), 14));
+  const historyData = await prisma.occupancyRecord.findMany({
+    where: {
+      timestamp: {
+        gte: historyStart,
+      },
+    },
+    orderBy: {
+      timestamp: "desc",
+    },
+  });
+
+  // Aggregate history data by day
+  const statsMap = new Map<
+    string,
+    {
+      date: Date;
+      poolMax: number;
+      wellnessMax: number;
+      poolSum: number;
+      poolCount: number;
+    }
+  >();
+  historyData.forEach((record) => {
+    const dateKey = record.timestamp.toISOString().split("T")[0];
+    const current = statsMap.get(dateKey) || {
+      date: record.timestamp,
+      poolMax: 0,
+      wellnessMax: 0,
+      poolSum: 0,
+      poolCount: 0,
+    };
+    statsMap.set(dateKey, {
+      date: record.timestamp,
+      poolMax: Math.max(current.poolMax, record.poolCount),
+      wellnessMax: Math.max(current.wellnessMax, record.wellnessCount),
+      poolSum: current.poolSum + record.poolCount,
+      poolCount: current.poolCount + 1,
+    });
+  });
+  const historyStats = Array.from(statsMap.values())
+    .map((stat) => ({
+      date: stat.date,
+      maxPool: stat.poolMax,
+      maxWellness: stat.wellnessMax,
+      avgPool: Math.round(stat.poolSum / stat.poolCount),
+    }))
+    .sort((a, b) => b.date.getTime() - a.date.getTime());
+
   return (
-    <div className="flex min-h-screen items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex min-h-screen w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
+    <main className="min-h-screen bg-slate-50 p-4 md:p-12">
+      <div className="max-w-7xl mx-auto">
+        <header className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
+          <div>
+            <h1 className="text-3xl font-bold text-slate-900">
+              Relaxační centrum Labe - Návštěvnost
+            </h1>
+            <p className="text-slate-500">
+              Aktuální a historická data obsazenosti bazénu a wellness.
+            </p>
+          </div>
+          <DateFilter />
+        </header>
+
+        <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
+          <aside className="lg:col-span-1 order-2 lg:order-1">
+            <HistorySidebar stats={historyStats} />
+          </aside>
+
+          <div className="lg:col-span-3 order-1 lg:order-2 space-y-8">
+            <section>
+              <CurrentStatus latestRecord={latestRecord} />
+            </section>
+
+            <section>
+              <StatsSection data={dailyData} />
+            </section>
+
+            <section>
+              <OccupancyChart
+                data={mergedChartData}
+                comparisons={comparisonSeries}
+              />
+            </section>
+
+            <section>
+              <DataTable data={dailyData} />
+            </section>
+          </div>
         </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
-      </main>
-    </div>
+
+        <footer className="pt-12 text-center text-xs text-slate-400">
+          Data jsou sbírána z oficiálních stránek města Nymburk každých 10 minut
+          (6:00 - 12:00).
+        </footer>
+      </div>
+    </main>
   );
 }
