@@ -1,0 +1,23 @@
+name: Trigger Pool Data Update
+
+on:
+  schedule:
+    # Run every 10 minutes from 6:00 to 22:00 (CET/CEST)
+    # GitHub Actions run in UTC.
+    # CET is UTC+1, CEST is UTC+2.
+    # 6:00 CET = 5:00 UTC. 22:00 CET = 21:00 UTC.
+    # Rough approximation covering the day: 4:00 UTC to 21:00 UTC.
+    - cron: "*/10 4-21 * * *"
+  workflow_dispatch: # Allow manual trigger
+
+jobs:
+  cron-job:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call API Endpoint
+        run: |
+          # Replace with your actual Vercel domain later or use a Secret
+          # We use the CRON_SECRET as a Bearer token
+          curl -X GET ${{ secrets.VERCEL_PROJECT_URL }}/api/cron/update \
+            -H "Authorization: Bearer ${{ secrets.CRON_SECRET }}" \
+            --fail
