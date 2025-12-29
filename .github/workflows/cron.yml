@@ -7,7 +7,7 @@ on:
     # CET is UTC+1, CEST is UTC+2.
     # 6:00 CET = 5:00 UTC. 22:00 CET = 21:00 UTC.
     # Rough approximation covering the day: 4:00 UTC to 21:00 UTC.
-    - cron: "*/10 4-23 * * *"
+    - cron: "*/10 4-11 * * *"
   workflow_dispatch: # Allow manual trigger
 
 jobs:

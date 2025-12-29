@@ -215,7 +215,7 @@ export default async function Home({
 
         <footer className="pt-12 text-center text-xs text-slate-400">
           Data jsou sbírána z oficiálních stránek města Nymburk každých 10 minut
-          (6:00 - 00:00).
+          (6:00 - 12:00).
         </footer>
       </div>
     </main>
