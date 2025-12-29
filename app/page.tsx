@@ -64,12 +64,23 @@ export default async function Home({
   }
 
   // 4. Merge Data for Chart
+  // Helper to format date in Prague time
+  const formatTimePrague = (date: Date) => {
+    // Basic approach: Add 1 hour (CET) or 2 hours (CEST)
+    // Better: use toLocaleString with strict options
+    return date.toLocaleTimeString("cs-CZ", {
+      timeZone: "Europe/Prague",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  };
+
   // Map keyed by time "HH:mm"
   const chartDataMap = new Map<string, any>();
 
   // Initialize with main data
   dailyData.forEach((record) => {
-    const time = format(record.timestamp, "HH:mm");
+    const time = formatTimePrague(record.timestamp);
     chartDataMap.set(time, {
       time,
       timestamp: record.timestamp,
@@ -91,7 +102,7 @@ export default async function Home({
     comparisonSeries.push({ id: seriesId, label, color });
 
     item.records.forEach((record) => {
-      const time = format(record.timestamp, "HH:mm");
+      const time = formatTimePrague(record.timestamp);
       const existing = chartDataMap.get(time) || {
         time,
         timestamp: record.timestamp,
