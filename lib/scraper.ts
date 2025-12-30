@@ -3,8 +3,8 @@ import * as cheerio from 'cheerio';
 const URL = 'https://www.mesto-nymburk.cz/relaxacni-centrum-labe/index.asp';
 
 export interface ScrapedData {
-  poolCount: number;
-  wellnessCount: number;
+  poolCount: number | null;
+  wellnessCount: number | null;
 }
 
 export async function scrapeOccupancy(): Promise<ScrapedData> {
@@ -34,8 +34,8 @@ export async function scrapeOccupancy(): Promise<ScrapedData> {
     // However, relying on index might be brittle if they change order.
     // Let's try to find the heading and then the next value.
 
-    let poolCount = 0;
-    let wellnessCount = 0;
+    let poolCount: number | null = null;
+    let wellnessCount: number | null = null;
 
     $('.navstevy__heading').each((_, el) => {
         const title = $(el).text().trim();

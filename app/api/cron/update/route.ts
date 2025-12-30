@@ -19,11 +19,31 @@ export async function GET(request: Request) {
     }
 
     const data = await scrapeOccupancy();
+
+    let poolCount = data.poolCount;
+    let wellnessCount = data.wellnessCount;
+
+    // Fallback to last known values if scraping failed to find numbers (e.g. site changed or empty)
+    if (poolCount === null || wellnessCount === null) {
+      console.warn('Scraper returned null values, fetching last known record.');
+      const lastRecord = await prisma.occupancyRecord.findFirst({
+        orderBy: { timestamp: 'desc' },
+      });
+
+      if (lastRecord) {
+        poolCount = poolCount ?? lastRecord.poolCount;
+        wellnessCount = wellnessCount ?? lastRecord.wellnessCount;
+      } else {
+        // Cold start fallback
+        poolCount = poolCount ?? 0;
+        wellnessCount = wellnessCount ?? 0;
+      }
+    }
     
     const record = await prisma.occupancyRecord.create({
       data: {
-        poolCount: data.poolCount,
-        wellnessCount: data.wellnessCount,
+        poolCount,
+        wellnessCount,
       },
     });
 
