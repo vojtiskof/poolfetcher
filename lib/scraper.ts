@@ -27,47 +27,30 @@ export async function scrapeOccupancy(): Promise<ScrapedData> {
     // We need to find the element that contains "Vodní zóna" and extract the number nearby.
     // Since I don't have the exact DOM structure, I'll search for text nodes.
     
-    // Strategy: Find all elements, look for text match, then look for the number in the next element or same element.
-    // Based on "Vodní zóna\n105", it might be in a separate element or a text node.
+    // Targeted scraping based on provided HTML structure:
+    // <div class="navstevy">...<p class="navstevy__heading">Vodní zóna</p><p class="navstevy__value">44</p>...</div>
     
+    // We can directly find the values. The order seems to be 1. Water, 2. Wellness.
+    // However, relying on index might be brittle if they change order.
+    // Let's try to find the heading and then the next value.
+
     let poolCount = 0;
     let wellnessCount = 0;
 
-    // Helper to extract number from string
-    const extractNumber = (text: string) => {
-      const match = text.match(/(\d+)/);
-      return match ? parseInt(match[1], 10) : 0;
-    };
-
-    $('body *').each((i, el) => {
-        const text = $(el).text().trim();
-        // Check for direct text match or contains
-        if (text.includes('Vodní zóna')) {
-            // Checks if the number is in the same element's text (if it's a leaf node)
-            // or if it is in the next sibling.
-            // But 'body *' iterates all.
-            
-            // A more specific selector would be better if we knew the class, but we don't.
-            // Let's try to look at logical siblings or parent structures if we were debugging.
-            // For now, let's assume standard layout.
+    $('.navstevy__heading').each((_, el) => {
+        const title = $(el).text().trim();
+        const valueEl = $(el).next('.navstevy__value');
+        if (valueEl.length) {
+            const val = parseInt(valueEl.text().trim(), 10);
+            if (!isNaN(val)) {
+                if (title.includes('Vodní zóna')) {
+                    poolCount = val;
+                } else if (title.includes('Wellness zóna')) {
+                    wellnessCount = val;
+                }
+            }
         }
     });
-
-    // Alternative robust strategy: 
-    // Get the full text of the body, regex match the pattern.
-    // "Vodní zóna" ... number
-    // "Wellness zóna" ... number
-    const bodyText = $('body').text().replace(/\s+/g, ' '); // normalize whitespace
-    
-    const poolMatch = bodyText.match(/Vodní zóna.*?(\d+)/);
-    if (poolMatch) {
-       poolCount = parseInt(poolMatch[1], 10);
-    }
-    
-    const wellnessMatch = bodyText.match(/Wellness zóna.*?(\d+)/);
-    if (wellnessMatch) {
-        wellnessCount = parseInt(wellnessMatch[1], 10);
-    }
 
     // fallback check: if counts are zero, maybe the regex is too loose or tight.
     // Specifically looking for the structure found in read_url_content:
