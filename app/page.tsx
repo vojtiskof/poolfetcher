@@ -252,8 +252,21 @@ export default async function Home({
           </div>
         </div>
 
-        <footer className="pt-12 text-center text-xs text-slate-400">
-          Data jsou sbírána každých 10 minut (6:00 - 12:00).
+        <footer className="pt-12 pb-8 flex flex-col items-center gap-4 text-xs text-slate-400">
+          <p>
+            Data jsou sbírána každých 10 minut 6:10 - 12:50.
+          </p>
+          <div className="flex flex-wrap justify-center gap-2 grayscale hover:grayscale-0 transition-all opacity-70 hover:opacity-100">
+            {/* Cron Job Status Badges */}
+            <img src="https://api.cron-job.org/jobs/7098021/0f876e1ba156d2b6/status-7.svg" alt="Cron Job Status" className="h-5" />
+            <img src="https://api.cron-job.org/jobs/7098022/e5cf872b0d84a9d6/status-7.svg" alt="Cron Job Status" className="h-5" />
+            <img src="https://api.cron-job.org/jobs/7098030/8e63d3af76e0af64/status-7.svg" alt="Cron Job Status" className="h-5" />
+
+            {/* Vercel Badge */}
+            <a href="https://vercel.com" target="_blank" rel="noopener noreferrer">
+              <img src="https://img.shields.io/badge/vercel-deployed-000000?style=flat&logo=vercel&logoColor=white" alt="Deployed on Vercel" className="h-5" />
+            </a>
+          </div>
         </footer>
       </div>
     </main>
