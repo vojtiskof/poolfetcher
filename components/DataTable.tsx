@@ -6,7 +6,6 @@ interface DataTableProps {
   data: {
     timestamp: Date | string;
     poolCount: number;
-    wellnessCount: number;
   }[];
 }
 
@@ -27,14 +26,13 @@ export function DataTable({ data }: DataTableProps) {
             <tr>
               <th className="px-6 py-3">Čas</th>
               <th className="px-6 py-3">Vodní zóna</th>
-              <th className="px-6 py-3">Wellness</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-100">
             {sortedData.length === 0 ? (
               <tr>
                 <td
-                  colSpan={3}
+                  colSpan={2}
                   className="px-6 py-4 text-center text-slate-500"
                 >
                   Žádná data pro tento den.
@@ -48,9 +46,6 @@ export function DataTable({ data }: DataTableProps) {
                   </td>
                   <td className="px-6 py-4 text-slate-600">
                     {record.poolCount}
-                  </td>
-                  <td className="px-6 py-4 text-slate-600">
-                    {record.wellnessCount}
                   </td>
                 </tr>
               ))

@@ -7,7 +7,6 @@ import { cs } from "date-fns/locale";
 export interface DailyStatsSummary {
   date: Date;
   maxPool: number;
-  maxWellness: number;
   avgPool: number;
 }
 
@@ -53,18 +52,16 @@ export function HistorySidebar({ stats }: { stats: DailyStatsSummary[] }) {
           return (
             <div
               key={dateStr}
-              className={`p-3 rounded-lg border transition-all ${
-                isMain
-                  ? "border-sky-500 bg-sky-50 shadow-sm ring-1 ring-sky-500"
-                  : "border-slate-100 hover:border-slate-300 bg-white"
-              }`}
+              className={`p-3 rounded-lg border transition-all ${isMain
+                ? "border-sky-500 bg-sky-50 shadow-sm ring-1 ring-sky-500"
+                : "border-slate-100 hover:border-slate-300 bg-white"
+                }`}
             >
               <div className="flex justify-between items-start mb-2">
                 <button
                   onClick={() => handleDateClick(dateStr)}
-                  className={`font-medium capitalize text-left hover:underline ${
-                    isMain ? "text-sky-700" : "text-slate-700"
-                  }`}
+                  className={`font-medium capitalize text-left hover:underline ${isMain ? "text-sky-700" : "text-slate-700"
+                    }`}
                 >
                   {format(day.date, "EEEE d.M.", { locale: cs })}
                 </button>
@@ -81,7 +78,7 @@ export function HistorySidebar({ stats }: { stats: DailyStatsSummary[] }) {
                 )}
               </div>
               <div
-                className="grid grid-cols-2 gap-2 text-xs text-slate-500"
+                className="grid grid-cols-1 gap-2 text-xs text-slate-500"
                 onClick={() => handleDateClick(dateStr)}
                 style={{ cursor: "pointer" }}
               >
@@ -90,23 +87,10 @@ export function HistorySidebar({ stats }: { stats: DailyStatsSummary[] }) {
                     Bazén Max
                   </span>
                   <span
-                    className={`font-semibold ${
-                      isMain ? "text-sky-700" : "text-slate-700"
-                    }`}
+                    className={`font-semibold ${isMain ? "text-sky-700" : "text-slate-700"
+                      }`}
                   >
                     {day.maxPool}
-                  </span>
-                </div>
-                <div>
-                  <span className="block text-[10px] uppercase tracking-wider text-slate-400">
-                    Wellness Max
-                  </span>
-                  <span
-                    className={`font-semibold ${
-                      isMain ? "text-pink-700" : "text-slate-700"
-                    }`}
-                  >
-                    {day.maxWellness}
                   </span>
                 </div>
               </div>

@@ -5,6 +5,7 @@ import { DateFilter } from "@/components/DateFilter";
 import { StatsSection } from "@/components/StatsSection";
 import { DataTable } from "@/components/DataTable";
 import { HistorySidebar } from "@/components/HistorySidebar";
+import { PoolSelector } from "@/components/PoolSelector";
 import { startOfDay, endOfDay, subDays, format } from "date-fns";
 import { cs } from "date-fns/locale";
 
@@ -14,16 +15,15 @@ interface ChartDataPoint {
   time: string;
   timestamp: Date;
   poolCount?: number;
-  wellnessCount?: number;
   [key: string]: string | number | Date | undefined;
 }
 
 export default async function Home({
   searchParams,
 }: {
-  searchParams: Promise<{ date?: string; compare?: string }>;
+  searchParams: Promise<{ date?: string; compare?: string; pool?: string; compare_with?: string }>;
 }) {
-  const { date, compare } = await searchParams;
+  const { date, compare, pool = "nymburk", compare_with } = await searchParams;
 
   const targetDate = date ? new Date(date) : new Date();
   const validDate = isNaN(targetDate.getTime()) ? new Date() : targetDate;
@@ -31,14 +31,16 @@ export default async function Home({
   const start = startOfDay(validDate);
   const end = endOfDay(validDate);
 
-  // 1. Fetch latest Record
+  // 1. Fetch latest Record (for selected pool)
   const latestRecord = await prisma.occupancyRecord.findFirst({
+    where: { poolId: pool },
     orderBy: { timestamp: "desc" },
   });
 
-  // 2. Fetch Daily Data (Main Chart)
+  // 2. Fetch Daily Data (Main Chart - selected pool)
   const dailyData = await prisma.occupancyRecord.findMany({
     where: {
+      poolId: pool,
       timestamp: {
         gte: start,
         lte: end,
@@ -50,9 +52,12 @@ export default async function Home({
   });
 
   // 3. Fetch Comparison Data
-  const compareDates = compare ? compare.split(",") : [];
-  const comparisonData: { date: string; records: typeof dailyData }[] = [];
+  // Can compare with other dates (existing feature) OR other pool (new feature)
 
+  const comparisonData: { id: string; label: string; records: typeof dailyData }[] = [];
+
+  // 3a. Compare Date
+  const compareDates = compare ? compare.split(",") : [];
   for (const dateStr of compareDates) {
     const compDate = new Date(dateStr);
     if (!isNaN(compDate.getTime())) {
@@ -60,6 +65,7 @@ export default async function Home({
       const compEnd = endOfDay(compDate);
       const records = await prisma.occupancyRecord.findMany({
         where: {
+          poolId: pool,
           timestamp: {
             gte: compStart,
             lte: compEnd,
@@ -67,15 +73,37 @@ export default async function Home({
         },
         orderBy: { timestamp: "asc" },
       });
-      comparisonData.push({ date: dateStr, records });
+      comparisonData.push({
+        id: dateStr,
+        label: format(new Date(dateStr), "d.M.", { locale: cs }),
+        records
+      });
     }
   }
 
+  // 3b. Compare Pool
+  if (compare_with && compare_with !== pool) {
+    // Fetch data for the OTHER pool on the SAME date
+    const otherRecords = await prisma.occupancyRecord.findMany({
+      where: {
+        poolId: compare_with,
+        timestamp: {
+          gte: start,
+          lte: end,
+        }
+      },
+      orderBy: { timestamp: "asc" }
+    });
+    const otherPoolName = compare_with === 'mb' ? 'Mladá Boleslav' : 'Nymburk';
+    comparisonData.push({
+      id: compare_with,
+      label: otherPoolName,
+      records: otherRecords
+    });
+  }
+
   // 4. Merge Data for Chart
-  // Helper to format date in Prague time
   const formatTimePrague = (date: Date) => {
-    // Basic approach: Add 1 hour (CET) or 2 hours (CEST)
-    // Better: use toLocaleString with strict options
     return date.toLocaleTimeString("cs-CZ", {
       timeZone: "Europe/Prague",
       hour: "2-digit",
@@ -83,7 +111,6 @@ export default async function Home({
     });
   };
 
-  // Map keyed by time "HH:mm"
   const chartDataMap = new Map<string, ChartDataPoint>();
 
   // Initialize with main data
@@ -93,7 +120,6 @@ export default async function Home({
       time,
       timestamp: record.timestamp,
       poolCount: record.poolCount,
-      wellnessCount: record.wellnessCount,
     });
   });
 
@@ -103,11 +129,10 @@ export default async function Home({
   const comparisonSeries: ComparisonSeries[] = [];
 
   comparisonData.forEach((item, index) => {
-    const seriesId = item.date;
     const color = colors[index % colors.length];
-    const label = format(new Date(item.date), "d.M.", { locale: cs });
 
-    comparisonSeries.push({ id: seriesId, label, color });
+    // If comparing POOLS, maybe we want different styling, but color differentiation is enough for now.
+    comparisonSeries.push({ id: item.id, label: item.label, color });
 
     item.records.forEach((record) => {
       const time = formatTimePrague(record.timestamp);
@@ -118,21 +143,20 @@ export default async function Home({
 
       chartDataMap.set(time, {
         ...existing,
-        [`pool_${seriesId}`]: record.poolCount,
-        [`wellness_${seriesId}`]: record.wellnessCount,
+        [`pool_${item.id}`]: record.poolCount,
       });
     });
   });
 
-  // Sort by time
   const mergedChartData = Array.from(chartDataMap.values()).sort((a, b) =>
     a.time.localeCompare(b.time)
   );
 
-  // 5. Fetch History Stats (Last 14 days)
+  // 5. Fetch History Stats (Last 14 days) - Filtered by current POOL
   const historyStart = startOfDay(subDays(new Date(), 14));
   const historyData = await prisma.occupancyRecord.findMany({
     where: {
+      poolId: pool,
       timestamp: {
         gte: historyStart,
       },
@@ -148,7 +172,6 @@ export default async function Home({
     {
       date: Date;
       poolMax: number;
-      wellnessMax: number;
       poolSum: number;
       poolCount: number;
     }
@@ -158,14 +181,12 @@ export default async function Home({
     const current = statsMap.get(dateKey) || {
       date: record.timestamp,
       poolMax: 0,
-      wellnessMax: 0,
       poolSum: 0,
       poolCount: 0,
     };
     statsMap.set(dateKey, {
       date: record.timestamp,
       poolMax: Math.max(current.poolMax, record.poolCount),
-      wellnessMax: Math.max(current.wellnessMax, record.wellnessCount),
       poolSum: current.poolSum + record.poolCount,
       poolCount: current.poolCount + 1,
     });
@@ -174,22 +195,24 @@ export default async function Home({
     .map((stat) => ({
       date: stat.date,
       maxPool: stat.poolMax,
-      maxWellness: stat.wellnessMax,
       avgPool: Math.round(stat.poolSum / stat.poolCount),
     }))
     .sort((a, b) => b.date.getTime() - a.date.getTime());
 
+  const poolTitle = pool === 'mb' ? 'Bazén Sokolovna MB' : 'Relaxační centrum Labe';
+
   return (
     <main className="min-h-screen bg-slate-50 p-4 md:p-12">
       <div className="max-w-7xl mx-auto">
-        <header className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
+        <header className="flex flex-col md:flex-row md:items-start justify-between gap-4 mb-8">
           <div>
             <h1 className="text-3xl font-bold text-slate-900">
-              Relaxační centrum Labe - Návštěvnost
+              {poolTitle} - Návštěvnost
             </h1>
-            <p className="text-slate-500">
-              Aktuální a historická data obsazenosti bazénu a wellness.
+            <p className="text-slate-500 mb-4">
+              Aktuální a historická data obsazenosti bazénu{pool === 'nymburk' && ' a wellness'}.
             </p>
+            <PoolSelector />
           </div>
           <DateFilter />
         </header>
@@ -205,7 +228,15 @@ export default async function Home({
             </section>
 
             <section>
-              <StatsSection data={dailyData} />
+              <StatsSection
+                data={dailyData}
+                comparisons={comparisonData.map((item, index) => ({
+                  id: item.id,
+                  label: item.label,
+                  color: colors[index % colors.length],
+                  records: item.records
+                }))}
+              />
             </section>
 
             <section>
@@ -222,8 +253,7 @@ export default async function Home({
         </div>
 
         <footer className="pt-12 text-center text-xs text-slate-400">
-          Data jsou sbírána z oficiálních stránek města Nymburk každých 10 minut
-          (6:00 - 12:00).
+          Data jsou sbírána každých 10 minut (6:00 - 12:00).
         </footer>
       </div>
     </main>

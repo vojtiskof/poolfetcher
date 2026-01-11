@@ -19,9 +19,11 @@ async function main() {
 
   let recordsToCreate = [];
 
+  const pools = ['nymburk', 'mb'];
+
   for (let d = 0; d <= daysBack; d++) {
     const currentDay = subDays(endDate, d);
-    
+
     // Start time for this day (06:00)
     let currentTime = startOfDay(currentDay);
     currentTime.setHours(startHour, 0, 0, 0);
@@ -31,18 +33,22 @@ async function main() {
     dayEndTime.setHours(endHour, 0, 0, 0);
 
     while (isBefore(currentTime, dayEndTime) || currentTime.getTime() === dayEndTime.getTime()) {
-      // Generate random pool count (0 - 100) with some time-based variance
-      // Peak around 10 AM maybe?
-      // Simple random for now:
-      const poolCount = Math.floor(Math.random() * 80) + 20; // 20-100
-      
-      const wellnessCount = Math.floor(Math.random() * 25) + 5; // 5-30
 
-      recordsToCreate.push({
-        timestamp: new Date(currentTime),
-        poolCount,
-        wellnessCount,
-      });
+      for (const poolId of pools) {
+        // Generate random pool count (0 - 100) with some time-based variance
+        // Different ranges for variety
+        const isMb = poolId === 'mb';
+        const base = isMb ? 10 : 20;
+        const variance = isMb ? 40 : 80;
+
+        const poolCount = Math.floor(Math.random() * variance) + base;
+
+        recordsToCreate.push({
+          timestamp: new Date(currentTime),
+          poolId,
+          poolCount,
+        });
+      }
 
       currentTime = addMinutes(currentTime, intervalMinutes);
     }
@@ -52,9 +58,9 @@ async function main() {
 
   // Batch insert
   for (const record of recordsToCreate) {
-      await prisma.occupancyRecord.create({
-          data: record
-      });
+    await prisma.occupancyRecord.create({
+      data: record
+    });
   }
 
   console.log('Seeding complete.');

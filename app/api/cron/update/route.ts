@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { scrapeOccupancy } from '@/lib/scraper';
+import { scrapers } from '@/lib/scraper';
 import { prisma } from '@/lib/prisma';
 
 export async function GET(request: Request) {
@@ -7,36 +7,41 @@ export async function GET(request: Request) {
     const authHeader = request.headers.get('authorization');
     const vercelCronHeader = request.headers.get('x-vercel-cron'); // Auto-injected by Vercel
 
-    const authorized = 
-        vercelCronHeader === '1' ||
-        authHeader === `Bearer ${process.env.CRON_SECRET}`;
+    const authorized =
+      vercelCronHeader === '1' ||
+      authHeader === `Bearer ${process.env.CRON_SECRET}`;
 
     if (!authorized) {
       // In production, we must strictly enforce auth
       if (process.env.NODE_ENV === 'production') {
-         return new NextResponse('Unauthorized', { status: 401 });
+        return new NextResponse('Unauthorized', { status: 401 });
       }
     }
 
-    const data = await scrapeOccupancy();
+    const results = await Promise.allSettled(scrapers.map(async (scraper) => {
+      try {
+        const data = await scraper.scrape();
 
-    const { poolCount, wellnessCount } = data;
+        // Skip if critical data is missing
+        if (data.poolCount === null) {
+          console.warn(`[${scraper.id}] Scraper returned null values. Skipping DB write.`);
+          return { success: false, id: scraper.id, message: 'Data unavailable' };
+        }
 
-    // If data is unavailable, do NOT use last known value as it messes up averages.
-    // Instead, skip storing this data point.
-    if (poolCount === null || wellnessCount === null) {
-      console.warn('Scraper returned null values. Skipping DB write.');
-      return NextResponse.json({ success: true, message: 'Data unavailable, skipped storage' });
-    }
+        const record = await prisma.occupancyRecord.create({
+          data: {
+            poolId: data.poolId,
+            poolCount: data.poolCount ?? 0,
+          },
+        });
+        return { success: true, id: scraper.id, record };
+      } catch (err) {
+        console.error(`[${scraper.id}] Scraper failed:`, err);
+        return { success: false, id: scraper.id, error: String(err) };
+      }
+    }));
 
-    const record = await prisma.occupancyRecord.create({
-      data: {
-        poolCount,
-        wellnessCount,
-      },
-    });
-
-    return NextResponse.json({ success: true, record });
+    return NextResponse.json({ success: true, results });
   } catch (error) {
     console.error('Cron job failed:', error);
     return NextResponse.json({ success: false, error: 'Internal Server Error' }, { status: 500 });
