@@ -1,0 +1,41 @@
+name: Database Backup
+
+on:
+  schedule:
+    - cron: '0 0 * * *' # Every day at midnight UTC
+  workflow_dispatch: # Allows manual trigger from GitHub UI
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install PostgreSQL Client
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client
+
+      # Dump the database to a file
+      # We use --format=c (custom) which is compressed and allows selective restores
+      - name: Create Backup
+        env:
+          # This secret must be added in GitHub Repository Settings -> Secrets and variables -> Actions
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          if [ -z "$DATABASE_URL" ]; then
+            echo "Error: DATABASE_URL secret is not set."
+            exit 1
+          fi
+          
+          # Get current date for filename
+          DATE=$(date +%Y-%m-%d)
+          
+          # Run dump
+          pg_dump "$DATABASE_URL" --format=c --file="backup-$DATE.dump"
+
+      # Upload the dump file as a build artifact
+      - name: Upload Backup Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: db-backup-${{ github.run_id }}
+          path: *.dump
+          retention-days: 90 # GitHub Actions free limit is usually 90 days
