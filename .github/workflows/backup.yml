@@ -40,7 +40,7 @@ jobs:
           DATE=$(date +%Y-%m-%d)
           
           # Run dump
-          pg_dump "$DATABASE_URL" --format=c --file="backup-$DATE.dump"
+          /usr/lib/postgresql/17/bin/pg_dump "$DATABASE_URL" --format=c --file="backup-$DATE.dump"
 
       # Upload the dump file as a build artifact
       - name: Upload Backup Artifact
