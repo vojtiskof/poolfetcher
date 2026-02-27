@@ -9,6 +9,8 @@ import { PoolSelector } from "@/components/PoolSelector";
 import { startOfDay, endOfDay, subDays, format } from "date-fns";
 import { cs } from "date-fns/locale";
 
+import { OccupancyRecord } from "@prisma/client";
+
 export const dynamic = "force-dynamic";
 
 interface ChartDataPoint {
@@ -31,75 +33,99 @@ export default async function Home({
   const start = startOfDay(validDate);
   const end = endOfDay(validDate);
 
-  // 1. Fetch latest Record (for selected pool)
-  const latestRecord = await prisma.occupancyRecord.findFirst({
-    where: { poolId: pool },
-    orderBy: { timestamp: "desc" },
-  });
+  // Fallback states
+  let dbError = false;
+  let latestRecord: OccupancyRecord | null = null;
+  let dailyData: OccupancyRecord[] = [];
+  const comparisonData: { id: string; label: string; records: OccupancyRecord[] }[] = [];
+  let historyData: OccupancyRecord[] = [];
 
-  // 2. Fetch Daily Data (Main Chart - selected pool)
-  const dailyData = await prisma.occupancyRecord.findMany({
-    where: {
-      poolId: pool,
-      timestamp: {
-        gte: start,
-        lte: end,
-      },
-    },
-    orderBy: {
-      timestamp: "asc",
-    },
-  });
+  try {
+    // 1. Fetch latest Record (for selected pool)
+    latestRecord = await prisma.occupancyRecord.findFirst({
+      where: { poolId: pool },
+      orderBy: { timestamp: "desc" },
+    });
 
-  // 3. Fetch Comparison Data
-  // Can compare with other dates (existing feature) OR other pool (new feature)
-
-  const comparisonData: { id: string; label: string; records: typeof dailyData }[] = [];
-
-  // 3a. Compare Date
-  const compareDates = compare ? compare.split(",") : [];
-  for (const dateStr of compareDates) {
-    const compDate = new Date(dateStr);
-    if (!isNaN(compDate.getTime())) {
-      const compStart = startOfDay(compDate);
-      const compEnd = endOfDay(compDate);
-      const records = await prisma.occupancyRecord.findMany({
-        where: {
-          poolId: pool,
-          timestamp: {
-            gte: compStart,
-            lte: compEnd,
-          },
-        },
-        orderBy: { timestamp: "asc" },
-      });
-      comparisonData.push({
-        id: dateStr,
-        label: format(new Date(dateStr), "d.M.", { locale: cs }),
-        records
-      });
-    }
-  }
-
-  // 3b. Compare Pool
-  if (compare_with && compare_with !== pool) {
-    // Fetch data for the OTHER pool on the SAME date
-    const otherRecords = await prisma.occupancyRecord.findMany({
+    // 2. Fetch Daily Data (Main Chart - selected pool)
+    dailyData = await prisma.occupancyRecord.findMany({
       where: {
-        poolId: compare_with,
+        poolId: pool,
         timestamp: {
           gte: start,
           lte: end,
-        }
+        },
       },
-      orderBy: { timestamp: "asc" }
+      orderBy: {
+        timestamp: "asc",
+      },
     });
-    const otherPoolName = compare_with === 'mb' ? 'Mladá Boleslav' : 'Nymburk';
-    comparisonData.push({
-      id: compare_with,
-      label: otherPoolName,
-      records: otherRecords
+
+    // 3. Fetch Comparison Data
+    // Can compare with other dates (existing feature) OR other pool (new feature)
+
+    // 3a. Compare Date
+    const compareDates = compare ? compare.split(",") : [];
+    for (const dateStr of compareDates) {
+      const compDate = new Date(dateStr);
+      if (!isNaN(compDate.getTime())) {
+        const compStart = startOfDay(compDate);
+        const compEnd = endOfDay(compDate);
+        const records = await prisma.occupancyRecord.findMany({
+          where: {
+            poolId: pool,
+            timestamp: {
+              gte: compStart,
+              lte: compEnd,
+            },
+          },
+          orderBy: { timestamp: "asc" },
+        });
+        comparisonData.push({
+          id: dateStr,
+          label: format(new Date(dateStr), "d.M.", { locale: cs }),
+          records
+        });
+      }
+    }
+
+    // 3b. Compare Pool
+    if (compare_with && compare_with !== pool) {
+      // Fetch data for the OTHER pool on the SAME date
+      const otherRecords = await prisma.occupancyRecord.findMany({
+        where: {
+          poolId: compare_with,
+          timestamp: {
+            gte: start,
+            lte: end,
+          }
+        },
+        orderBy: { timestamp: "asc" }
+      });
+      const otherPoolName = compare_with === 'mb' ? 'Mladá Boleslav' : 'Nymburk';
+      comparisonData.push({
+        id: compare_with,
+        label: otherPoolName,
+        records: otherRecords
+      });
+    }
+
+    // 5. Fetch History Stats (Last 14 days) - Filtered by current POOL
+    const historyStart = startOfDay(subDays(new Date(), 14));
+    historyData = await prisma.occupancyRecord.findMany({
+      where: {
+        poolId: pool,
+        timestamp: {
+          gte: historyStart,
+        },
+      },
+      orderBy: {
+        timestamp: "desc",
+      },
     });
+  } catch (error) {
+    console.error("Database query failed:", error);
+    dbError = true;
   }
 
   // 4. Merge Data for Chart
@@ -114,7 +140,7 @@ export default async function Home({
   const chartDataMap = new Map<string, ChartDataPoint>();
 
   // Initialize with main data
-  dailyData.forEach((record) => {
+  dailyData.forEach((record: OccupancyRecord) => {
     const time = formatTimePrague(record.timestamp);
     chartDataMap.set(time, {
       time,
@@ -134,7 +160,7 @@ export default async function Home({
     // If comparing POOLS, maybe we want different styling, but color differentiation is enough for now.
     comparisonSeries.push({ id: item.id, label: item.label, color });
 
-    item.records.forEach((record) => {
+    item.records.forEach((record: OccupancyRecord) => {
       const time = formatTimePrague(record.timestamp);
       const existing = chartDataMap.get(time) || {
         time,
@@ -152,20 +178,6 @@ export default async function Home({
     a.time.localeCompare(b.time)
   );
 
-  // 5. Fetch History Stats (Last 14 days) - Filtered by current POOL
-  const historyStart = startOfDay(subDays(new Date(), 14));
-  const historyData = await prisma.occupancyRecord.findMany({
-    where: {
-      poolId: pool,
-      timestamp: {
-        gte: historyStart,
-      },
-    },
-    orderBy: {
-      timestamp: "desc",
-    },
-  });
-
   // Aggregate history data by day
   const statsMap = new Map<
     string,
@@ -176,7 +188,7 @@ export default async function Home({
       poolCount: number;
     }
   >();
-  historyData.forEach((record) => {
+  historyData.forEach((record: OccupancyRecord) => {
     const dateKey = record.timestamp.toISOString().split("T")[0];
     const current = statsMap.get(dateKey) || {
       date: record.timestamp,
@@ -216,6 +228,20 @@ export default async function Home({
           </div>
           <DateFilter />
         </header>
+
+        {dbError && (
+          <div className="mb-8 p-4 bg-orange-50 border border-orange-200 rounded-lg text-orange-800 flex items-start gap-3 shadow-sm">
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 flex-shrink-0 text-orange-500 mt-0.5" viewBox="0 0 20 20" fill="currentColor">
+              <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+            </svg>
+            <div>
+              <h3 className="font-semibold mb-1">Došlo k chybě databáze</h3>
+              <p className="text-sm">
+                Aplikace pravděpodobně vyčerpala svůj měsíční free limit databázových dotazů, proto se nemohla načíst žádná aktuální ani historická data. Grafy jsou momentálně prázdné.
+              </p>
+            </div>
+          </div>
+        )}
 
         <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
           <aside className="lg:col-span-1 order-2 lg:order-1">
