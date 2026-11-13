@@ -31,7 +31,6 @@ import { OccupancyRecord } from "@prisma/client";
 import { AlertTriangle, Waves } from "lucide-react";
 
 export const dynamic = "force-dynamic";
-export const preferredRegion = ["fra1", "cdg1", "arn1", "lhr1"];
 
 const COMPARISON_COLORS = ["#f59e0b", "#8b5cf6", "#10b981", "#ef4444"];
 const WEEKDAY_LABELS: { dayIndex: number; label: string }[] = [

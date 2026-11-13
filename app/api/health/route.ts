@@ -3,7 +3,6 @@ import { prisma } from "@/lib/prisma";
 import { POOL_LIST } from "@/lib/pools";
 
 export const dynamic = "force-dynamic";
-export const preferredRegion = ["fra1", "cdg1", "arn1", "lhr1"];
 
 export async function GET() {
   try {
@@ -29,6 +28,7 @@ export async function GET() {
 
     return NextResponse.json({
       ok: true,
+      region: process.env.VERCEL_REGION ?? "local",
       timestamp: new Date().toISOString(),
       pools: poolsStatus,
     });

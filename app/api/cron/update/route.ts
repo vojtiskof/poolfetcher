@@ -5,8 +5,9 @@ import { prisma } from "@/lib/prisma";
 import { PoolId } from "@/lib/pools";
 
 export const dynamic = "force-dynamic";
-export const preferredRegion = ["fra1", "cdg1", "arn1", "lhr1"];
 export const maxDuration = 30;
+
+const EXECUTION_REGION = process.env.VERCEL_REGION ?? "local";
 
 function isAuthorized(request: Request): boolean {
   if (process.env.NODE_ENV !== "production") {
@@ -109,6 +110,7 @@ export async function GET(request: Request) {
         {
           success: false,
           partialFailure,
+          region: EXECUTION_REGION,
           results,
           timestamp: new Date().toISOString(),
         },
@@ -119,6 +121,7 @@ export async function GET(request: Request) {
     return NextResponse.json({
       success: true,
       partialFailure,
+      region: EXECUTION_REGION,
       results,
       timestamp: new Date().toISOString(),
     });

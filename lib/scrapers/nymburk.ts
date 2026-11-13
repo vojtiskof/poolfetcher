@@ -97,7 +97,7 @@ export async function scrapeNymburk(): Promise<ScrapedData> {
       const response = await fetch(url, {
         cache: "no-store",
         headers: BROWSER_HEADERS,
-        signal: AbortSignal.timeout(8000),
+        signal: AbortSignal.timeout(5500),
       });
 
       if (!response.ok) {
