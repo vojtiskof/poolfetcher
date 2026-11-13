@@ -89,8 +89,88 @@ export function extractNymburkPoolCount(html: string): number | null {
   return null;
 }
 
+async function fetchViaProxy(
+  proxyUrl: string,
+  proxySecret?: string
+): Promise<{ poolCount: number; sourceUrl: string } | null> {
+  const headers: Record<string, string> = {
+    ...BROWSER_HEADERS,
+  };
+  if (proxySecret) {
+    headers["x-proxy-secret"] = proxySecret;
+    headers["Authorization"] = `Bearer ${proxySecret}`;
+  }
+
+  const response = await fetch(proxyUrl, {
+    cache: "no-store",
+    headers,
+    signal: AbortSignal.timeout(8000),
+  });
+
+  if (!response.ok) {
+    throw new Error(`HTTP ${response.status}`);
+  }
+
+  const contentType = response.headers.get("content-type") ?? "";
+  if (contentType.includes("application/json")) {
+    const json = (await response.json()) as {
+      poolCount?: unknown;
+      html?: unknown;
+      sourceUrl?: unknown;
+    };
+    if (
+      typeof json.poolCount === "number" &&
+      Number.isInteger(json.poolCount) &&
+      json.poolCount >= 0 &&
+      json.poolCount <= 1000
+    ) {
+      return {
+        poolCount: json.poolCount,
+        sourceUrl:
+          typeof json.sourceUrl === "string" ? json.sourceUrl : proxyUrl,
+      };
+    }
+    if (typeof json.html === "string") {
+      const parsed = extractNymburkPoolCount(json.html);
+      if (parsed !== null) {
+        return {
+          poolCount: parsed,
+          sourceUrl:
+            typeof json.sourceUrl === "string" ? json.sourceUrl : proxyUrl,
+        };
+      }
+    }
+    throw new Error("Proxy JSON did not contain valid poolCount or html");
+  }
+
+  const html = await response.text();
+  const parsed = extractNymburkPoolCount(html);
+  if (parsed === null) {
+    throw new Error("Proxy HTML parsed but pool count not found");
+  }
+  return { poolCount: parsed, sourceUrl: proxyUrl };
+}
+
 export async function scrapeNymburk(): Promise<ScrapedData> {
   const errors: string[] = [];
+  const proxyUrl = process.env.NYMBURK_PROXY_URL?.trim();
+  const proxySecret = process.env.NYMBURK_PROXY_SECRET?.trim();
+
+  if (proxyUrl) {
+    try {
+      const proxied = await fetchViaProxy(proxyUrl, proxySecret);
+      if (proxied) {
+        return {
+          poolId: "nymburk",
+          poolCount: proxied.poolCount,
+          sourceUrl: proxied.sourceUrl,
+        };
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      errors.push(`proxy -> ${message}`);
+    }
+  }
 
   for (const url of NYMBURK_URLS) {
     try {

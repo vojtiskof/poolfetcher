@@ -169,7 +169,12 @@ export async function POST(request: Request) {
       const results = await runScrapers();
       const succeeded = results.some((r) => r.success);
       return NextResponse.json(
-        { success: succeeded, results, timestamp: new Date().toISOString() },
+        {
+          success: succeeded,
+          region: EXECUTION_REGION,
+          results,
+          timestamp: new Date().toISOString(),
+        },
         { status: succeeded ? 200 : 502 }
       );
     }
@@ -237,6 +242,7 @@ export async function POST(request: Request) {
 
     return NextResponse.json({
       success: true,
+      region: EXECUTION_REGION,
       createdCount: created.length,
       records: created,
       timestamp: new Date().toISOString(),
