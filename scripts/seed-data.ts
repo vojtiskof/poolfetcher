@@ -15,9 +15,8 @@ async function main() {
   // console.log('Cleared existing data.');
 
   const endDate = new Date();
-  const startDate = subDays(endDate, daysBack);
 
-  let recordsToCreate = [];
+  const recordsToCreate = [];
 
   const pools = ['nymburk', 'mb'];
 

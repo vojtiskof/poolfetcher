@@ -1,76 +1,89 @@
-'use client';
+"use client";
 
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useRouter, useSearchParams } from "next/navigation";
+import { ArrowLeftRight, Waves } from "lucide-react";
+import { POOL_LIST, normalizePoolId } from "@/lib/pools";
 
 export function PoolSelector() {
-    const router = useRouter();
-    const searchParams = useSearchParams();
-    const currentPool = searchParams.get('pool') || 'nymburk';
-    const isComparing = searchParams.has('compare_with');
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const currentPool = normalizePoolId(searchParams.get("pool"));
+  const isComparing = searchParams.has("compare_with");
 
-    const pools = [
-        { id: 'nymburk', name: 'Nymburk' },
-        { id: 'mb', name: 'Mladá Boleslav' },
-    ];
+  const handlePoolChange = (poolId: string) => {
+    const params = new URLSearchParams(searchParams.toString());
+    const currentCompare = params.get("compare_with");
 
-    const handlePoolChange = (poolId: string) => {
-        const params = new URLSearchParams(searchParams);
-        const currentCompare = params.get('compare_with');
+    if (currentCompare === poolId) {
+      const other = POOL_LIST.find((p) => p.id !== poolId)?.id;
+      if (other) {
+        params.set("compare_with", other);
+      } else {
+        params.delete("compare_with");
+      }
+    }
 
-        // If we are switching TO the pool we are currently comparing WITH,
-        // swap the comparison to the pool we are coming FROM (or just the other one).
-        if (currentCompare === poolId) {
-            const other = pools.find(p => p.id !== poolId)?.id;
-            if (other) {
-                params.set('compare_with', other);
-            } else {
-                params.delete('compare_with');
-            }
-        }
+    params.set("pool", poolId);
+    router.push(`/?${params.toString()}`);
+  };
 
-        params.set('pool', poolId);
-        router.push(`/?${params.toString()}`);
-    };
+  const toggleComparison = () => {
+    const params = new URLSearchParams(searchParams.toString());
+    if (!isComparing) {
+      const other =
+        POOL_LIST.find((p) => p.id !== currentPool)?.id || "mb";
+      params.set("compare_with", other);
+    } else {
+      params.delete("compare_with");
+    }
+    router.push(`/?${params.toString()}`);
+  };
 
-    const toggleComparison = (e: React.ChangeEvent<HTMLInputElement>) => {
-        const params = new URLSearchParams(searchParams);
-        if (e.target.checked) {
-            // If current is nymburk, compare with mb, and vice versa.
-            // Or just allow generic comparison.
-            const other = pools.find(p => p.id !== currentPool)?.id || 'mb';
-            params.set('compare_with', other);
-        } else {
-            params.delete('compare_with');
-        }
-        router.push(`/?${params.toString()}`);
-    };
+  return (
+    <div className="flex flex-col sm:flex-row sm:items-center gap-2.5 w-full sm:w-auto">
+      <div
+        role="tablist"
+        aria-label="Výběr bazénu"
+        className="grid grid-cols-2 sm:inline-flex bg-slate-100/90 p-1 rounded-xl border border-slate-200/70"
+      >
+        {POOL_LIST.map((pool) => {
+          const active = currentPool === pool.id;
+          return (
+            <button
+              key={pool.id}
+              type="button"
+              role="tab"
+              aria-selected={active}
+              onClick={() => handlePoolChange(pool.id)}
+              className={`flex items-center justify-center gap-2 px-3.5 py-2 text-sm font-medium rounded-lg transition-all cursor-pointer ${
+                active
+                  ? "bg-white text-slate-900 shadow-sm ring-1 ring-slate-200/60"
+                  : "text-slate-600 hover:text-slate-900"
+              }`}
+            >
+              <Waves
+                size={15}
+                className={active ? "text-sky-600" : "text-slate-400"}
+              />
+              <span className="truncate">{pool.shortName}</span>
+            </button>
+          );
+        })}
+      </div>
 
-    return (
-        <div className="flex items-center gap-4 bg-white p-2 rounded-lg border border-slate-200">
-            <div className="flex gap-1 bg-slate-100 p-1 rounded-md">
-                {pools.map((pool) => (
-                    <button
-                        key={pool.id}
-                        onClick={() => handlePoolChange(pool.id)}
-                        className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${currentPool === pool.id
-                            ? 'bg-white text-slate-900 shadow-sm'
-                            : 'text-slate-500 hover:text-slate-700'
-                            }`}
-                    >
-                        {pool.name}
-                    </button>
-                ))}
-            </div>
-
-            <label className="flex items-center gap-2 text-sm text-slate-600 cursor-pointer">
-                <input
-                    type="checkbox"
-                    checked={isComparing}
-                    onChange={toggleComparison}
-                    className="rounded border-slate-300 text-blue-600 focus:ring-blue-500"
-                />
-                Porovnat bazény
-            </label>
-        </div>
-    );
+      <button
+        type="button"
+        aria-pressed={isComparing}
+        onClick={toggleComparison}
+        className={`inline-flex items-center justify-center gap-2 px-3.5 py-2 text-sm font-medium rounded-xl border transition-all cursor-pointer ${
+          isComparing
+            ? "bg-sky-50 text-sky-700 border-sky-200 shadow-xs"
+            : "bg-white text-slate-600 border-slate-200 hover:border-slate-300 hover:text-slate-900"
+        }`}
+      >
+        <ArrowLeftRight size={15} />
+        <span>Porovnat bazény</span>
+      </button>
+    </div>
+  );
 }

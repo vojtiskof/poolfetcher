@@ -1,10 +1,12 @@
+import { PoolId } from "../pools";
 
 export interface ScrapedData {
-  poolId: string;
+  poolId: PoolId;
   poolCount: number;
+  sourceUrl?: string;
 }
 
 export interface Scraper {
-  id: string;
+  id: PoolId;
   scrape: () => Promise<ScrapedData>;
 }

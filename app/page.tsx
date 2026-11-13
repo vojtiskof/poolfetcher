@@ -1,297 +1,478 @@
+import { Suspense } from "react";
 import { prisma } from "@/lib/prisma";
 import { CurrentStatus } from "@/components/CurrentStatus";
-import { OccupancyChart, ComparisonSeries } from "@/components/OccupancyChart";
+import {
+  OccupancyChart,
+  ComparisonSeries,
+  ChartDataPoint,
+} from "@/components/OccupancyChart";
 import { DateFilter } from "@/components/DateFilter";
-import { StatsSection } from "@/components/StatsSection";
+import { StatsSection, WeekdayAverage } from "@/components/StatsSection";
 import { DataTable } from "@/components/DataTable";
-import { HistorySidebar } from "@/components/HistorySidebar";
+import { HistorySidebar, DailyStatsSummary } from "@/components/HistorySidebar";
 import { PoolSelector } from "@/components/PoolSelector";
-import { startOfDay, endOfDay, subDays, format } from "date-fns";
+import {
+  QuickCompareBar,
+  ActiveComparisonBadge,
+} from "@/components/QuickCompareBar";
+import { POOLS, PoolId, normalizePoolId } from "@/lib/pools";
+import {
+  getPrague10MinBucket,
+  getPragueDateString,
+  getPragueDayBounds,
+  getPragueDayOfWeek,
+  normalizePragueDateParam,
+  parseDateStringNoon,
+  shiftDateString,
+} from "@/lib/date";
+import { format } from "date-fns";
 import { cs } from "date-fns/locale";
-
 import { OccupancyRecord } from "@prisma/client";
+import { AlertTriangle, Waves } from "lucide-react";
 
 export const dynamic = "force-dynamic";
+export const preferredRegion = ["fra1", "cdg1", "arn1", "lhr1"];
 
-interface ChartDataPoint {
-  time: string;
-  timestamp: Date;
-  poolCount?: number;
-  [key: string]: string | number | Date | undefined;
-}
+const COMPARISON_COLORS = ["#f59e0b", "#8b5cf6", "#10b981", "#ef4444"];
+const WEEKDAY_LABELS: { dayIndex: number; label: string }[] = [
+  { dayIndex: 1, label: "Po" },
+  { dayIndex: 2, label: "Út" },
+  { dayIndex: 3, label: "St" },
+  { dayIndex: 4, label: "Čt" },
+  { dayIndex: 5, label: "Pá" },
+  { dayIndex: 6, label: "So" },
+  { dayIndex: 0, label: "Ne" },
+];
 
 export default async function Home({
   searchParams,
 }: {
-  searchParams: Promise<{ date?: string; compare?: string; pool?: string; compare_with?: string }>;
+  searchParams: Promise<{
+    date?: string;
+    compare?: string;
+    pool?: string;
+    compare_with?: string;
+  }>;
 }) {
-  const { date, compare, pool = "nymburk", compare_with } = await searchParams;
+  const { date, compare, pool: rawPool, compare_with: rawCompareWith } =
+    await searchParams;
 
-  const targetDate = date ? new Date(date) : new Date();
-  const validDate = isNaN(targetDate.getTime()) ? new Date() : targetDate;
+  const poolId: PoolId = normalizePoolId(rawPool);
+  const poolConfig = POOLS[poolId];
+  const todayStr = getPragueDateString(new Date());
+  const selectedDateStr = normalizePragueDateParam(date);
+  const isToday = selectedDateStr === todayStr;
 
-  const start = startOfDay(validDate);
-  const end = endOfDay(validDate);
+  const comparePoolId: PoolId | null =
+    rawCompareWith && normalizePoolId(rawCompareWith) !== poolId
+      ? normalizePoolId(rawCompareWith)
+      : null;
 
-  // Fallback states
+  const { start, end } = getPragueDayBounds(selectedDateStr);
+
   let dbError = false;
   let latestRecord: OccupancyRecord | null = null;
+  let previousRecord: OccupancyRecord | null = null;
+  let comparedPoolLatest: OccupancyRecord | null = null;
   let dailyData: OccupancyRecord[] = [];
-  const comparisonData: { id: string; label: string; records: OccupancyRecord[] }[] = [];
+  const comparisonData: {
+    id: string;
+    label: string;
+    type: "date" | "pool";
+    records: OccupancyRecord[];
+  }[] = [];
   let historyData: OccupancyRecord[] = [];
 
   try {
-    // 1. Fetch latest Record (for selected pool)
-    latestRecord = await prisma.occupancyRecord.findFirst({
-      where: { poolId: pool },
+    // 1. Latest 2 records for selected pool (for live count + trend)
+    const latestTwo = await prisma.occupancyRecord.findMany({
+      where: { poolId },
       orderBy: { timestamp: "desc" },
+      take: 2,
     });
+    latestRecord = latestTwo[0] ?? null;
+    previousRecord = latestTwo[1] ?? null;
 
-    // 2. Fetch Daily Data (Main Chart - selected pool)
+    if (comparePoolId) {
+      comparedPoolLatest = await prisma.occupancyRecord.findFirst({
+        where: { poolId: comparePoolId },
+        orderBy: { timestamp: "desc" },
+      });
+    }
+
+    // 2. Daily data for selected date (Europe/Prague bounds)
     dailyData = await prisma.occupancyRecord.findMany({
       where: {
-        poolId: pool,
+        poolId,
         timestamp: {
           gte: start,
           lte: end,
         },
       },
-      orderBy: {
-        timestamp: "asc",
-      },
+      orderBy: { timestamp: "asc" },
     });
 
-    // 3. Fetch Comparison Data
-    // Can compare with other dates (existing feature) OR other pool (new feature)
+    // 3a. Compare Dates
+    const compareDates = Array.from(
+      new Set(
+        (compare ? compare.split(",") : [])
+          .map((d) => d.trim())
+          .filter((d) => /^\d{4}-\d{2}-\d{2}$/.test(d) && d !== selectedDateStr)
+      )
+    ).slice(0, 4);
 
-    // 3a. Compare Date
-    const compareDates = compare ? compare.split(",") : [];
-    for (const dateStr of compareDates) {
-      const compDate = new Date(dateStr);
-      if (!isNaN(compDate.getTime())) {
-        const compStart = startOfDay(compDate);
-        const compEnd = endOfDay(compDate);
-        const records = await prisma.occupancyRecord.findMany({
-          where: {
-            poolId: pool,
-            timestamp: {
-              gte: compStart,
-              lte: compEnd,
-            },
+    for (const compDateStr of compareDates) {
+      const bounds = getPragueDayBounds(compDateStr);
+      const records = await prisma.occupancyRecord.findMany({
+        where: {
+          poolId,
+          timestamp: {
+            gte: bounds.start,
+            lte: bounds.end,
           },
-          orderBy: { timestamp: "asc" },
-        });
-        comparisonData.push({
-          id: dateStr,
-          label: format(new Date(dateStr), "d.M.", { locale: cs }),
-          records
-        });
-      }
+        },
+        orderBy: { timestamp: "asc" },
+      });
+      comparisonData.push({
+        id: compDateStr,
+        label: format(parseDateStringNoon(compDateStr), "EEE d.M.", {
+          locale: cs,
+        }),
+        type: "date",
+        records,
+      });
     }
 
-    // 3b. Compare Pool
-    if (compare_with && compare_with !== pool) {
-      // Fetch data for the OTHER pool on the SAME date
+    // 3b. Compare Other Pool on the same date
+    if (comparePoolId) {
       const otherRecords = await prisma.occupancyRecord.findMany({
         where: {
-          poolId: compare_with,
+          poolId: comparePoolId,
           timestamp: {
             gte: start,
             lte: end,
-          }
+          },
         },
-        orderBy: { timestamp: "asc" }
+        orderBy: { timestamp: "asc" },
       });
-      const otherPoolName = compare_with === 'mb' ? 'Mladá Boleslav' : 'Nymburk';
       comparisonData.push({
-        id: compare_with,
-        label: otherPoolName,
-        records: otherRecords
+        id: comparePoolId,
+        label: POOLS[comparePoolId].shortName,
+        type: "pool",
+        records: otherRecords,
       });
     }
 
-    // 5. Fetch History Stats (Last 14 days) - Filtered by current POOL
-    const historyStart = startOfDay(subDays(new Date(), 14));
+    // 4. Last 14 days history (Europe/Prague)
+    const historyStartDateStr = shiftDateString(todayStr, -13);
+    const { start: historyStart } = getPragueDayBounds(historyStartDateStr);
+
     historyData = await prisma.occupancyRecord.findMany({
       where: {
-        poolId: pool,
+        poolId,
         timestamp: {
           gte: historyStart,
         },
       },
-      orderBy: {
-        timestamp: "desc",
-      },
+      orderBy: { timestamp: "desc" },
     });
   } catch (error) {
     console.error("Database query failed:", error);
     dbError = true;
   }
 
-  // 4. Merge Data for Chart
-  const formatTimePrague = (date: Date) => {
-    return date.toLocaleTimeString("cs-CZ", {
-      timeZone: "Europe/Prague",
-      hour: "2-digit",
-      minute: "2-digit",
-    });
-  };
-
+  // Merge data into 10-minute Prague buckets for smooth, aligned charting
   const chartDataMap = new Map<string, ChartDataPoint>();
 
-  // Initialize with main data
-  dailyData.forEach((record: OccupancyRecord) => {
-    const time = formatTimePrague(record.timestamp);
-    chartDataMap.set(time, {
-      time,
-      timestamp: record.timestamp,
+  dailyData.forEach((record) => {
+    const bucket = getPrague10MinBucket(record.timestamp);
+    chartDataMap.set(bucket.label, {
+      time: bucket.label,
+      minutes: bucket.minutes,
       poolCount: record.poolCount,
     });
   });
 
-  // Merge comparison data
-  const colors = ["#f59e0b", "#8b5cf6", "#10b981", "#ef4444"];
-
   const comparisonSeries: ComparisonSeries[] = [];
+  const activeBadges: ActiveComparisonBadge[] = [];
 
   comparisonData.forEach((item, index) => {
-    const color = colors[index % colors.length];
-
-    // If comparing POOLS, maybe we want different styling, but color differentiation is enough for now.
+    const color = COMPARISON_COLORS[index % COMPARISON_COLORS.length];
     comparisonSeries.push({ id: item.id, label: item.label, color });
+    activeBadges.push({
+      id: item.id,
+      label: item.label,
+      color,
+      type: item.type,
+    });
 
-    item.records.forEach((record: OccupancyRecord) => {
-      const time = formatTimePrague(record.timestamp);
-      const existing = chartDataMap.get(time) || {
-        time,
-        timestamp: record.timestamp,
+    item.records.forEach((record) => {
+      const bucket = getPrague10MinBucket(record.timestamp);
+      const existing = chartDataMap.get(bucket.label) || {
+        time: bucket.label,
+        minutes: bucket.minutes,
       };
-
-      chartDataMap.set(time, {
+      chartDataMap.set(bucket.label, {
         ...existing,
         [`pool_${item.id}`]: record.poolCount,
       });
     });
   });
 
-  const mergedChartData = Array.from(chartDataMap.values()).sort((a, b) =>
-    a.time.localeCompare(b.time)
+  const mergedChartData = Array.from(chartDataMap.values()).sort(
+    (a, b) => a.minutes - b.minutes
   );
 
-  // Aggregate history data by day
+  // Aggregate 14-day history by Prague calendar date
   const statsMap = new Map<
     string,
-    {
-      date: Date;
-      poolMax: number;
-      poolSum: number;
-      poolCount: number;
-    }
+    { maxPool: number; sumPool: number; count: number }
   >();
-  historyData.forEach((record: OccupancyRecord) => {
-    const dateKey = record.timestamp.toISOString().split("T")[0];
+  const weekdayMap = new Map<
+    number,
+    { sumPool: number; count: number; days: Set<string> }
+  >();
+
+  historyData.forEach((record) => {
+    const dateKey = getPragueDateString(record.timestamp);
     const current = statsMap.get(dateKey) || {
-      date: record.timestamp,
-      poolMax: 0,
-      poolSum: 0,
-      poolCount: 0,
+      maxPool: 0,
+      sumPool: 0,
+      count: 0,
     };
     statsMap.set(dateKey, {
-      date: record.timestamp,
-      poolMax: Math.max(current.poolMax, record.poolCount),
-      poolSum: current.poolSum + record.poolCount,
-      poolCount: current.poolCount + 1,
+      maxPool: Math.max(current.maxPool, record.poolCount),
+      sumPool: current.sumPool + record.poolCount,
+      count: current.count + 1,
     });
-  });
-  const historyStats = Array.from(statsMap.values())
-    .map((stat) => ({
-      date: stat.date,
-      maxPool: stat.poolMax,
-      avgPool: Math.round(stat.poolSum / stat.poolCount),
-    }))
-    .sort((a, b) => b.date.getTime() - a.date.getTime());
 
-  const poolTitle = pool === 'mb' ? 'Bazén Sokolovna MB' : 'Relaxační centrum Labe';
+    const dow = getPragueDayOfWeek(dateKey);
+    const wd = weekdayMap.get(dow) || {
+      sumPool: 0,
+      count: 0,
+      days: new Set<string>(),
+    };
+    wd.sumPool += record.poolCount;
+    wd.count += 1;
+    wd.days.add(dateKey);
+    weekdayMap.set(dow, wd);
+  });
+
+  const historyStats: DailyStatsSummary[] = Array.from(statsMap.entries())
+    .map(([dateStr, stat]) => ({
+      dateStr,
+      maxPool: stat.maxPool,
+      avgPool: Math.round(stat.sumPool / stat.count),
+      samples: stat.count,
+    }))
+    .sort((a, b) => b.dateStr.localeCompare(a.dateStr));
+
+  const weekdayAverages: WeekdayAverage[] =
+    historyData.length > 0
+      ? WEEKDAY_LABELS.map((w) => {
+          const stat = weekdayMap.get(w.dayIndex);
+          return {
+            dayIndex: w.dayIndex,
+            label: w.label,
+            avgPool:
+              stat && stat.count > 0 ? Math.round(stat.sumPool / stat.count) : 0,
+            sampleDays: stat ? stat.days.size : 0,
+          };
+        }).filter((w) => w.sampleDays > 0)
+      : [];
+
+  const selectedDateNoon = parseDateStringNoon(selectedDateStr);
+  const selectedDateLabel = format(selectedDateNoon, "EEEE d. MMMM", {
+    locale: cs,
+  });
+  const chartTitle = isToday
+    ? "Dnešní průběh návštěvnosti"
+    : `Návštěvnost — ${selectedDateLabel}`;
 
   return (
-    <main className="min-h-screen bg-slate-50 p-4 md:p-12">
-      <div className="max-w-7xl mx-auto">
-        <header className="flex flex-col md:flex-row md:items-start justify-between gap-4 mb-8">
-          <div>
-            <h1 className="text-3xl font-bold text-slate-900">
-              {poolTitle} - Návštěvnost
-            </h1>
-            <p className="text-slate-500 mb-4">
-              Aktuální a historická data obsazenosti bazénu{pool === 'nymburk' && ' a wellness'}.
-            </p>
-            <PoolSelector />
+    <main className="min-h-screen bg-slate-50 text-slate-900">
+      {/* Subtle aquatic top bar accent */}
+      <div className="h-1.5 w-full bg-gradient-to-r from-sky-500 via-cyan-500 to-teal-500" />
+
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-5 sm:py-8">
+        {/* Header */}
+        <header className="flex flex-col gap-5 mb-6 sm:mb-8">
+          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+            <div className="flex items-start gap-3.5">
+              <div className="h-11 w-11 rounded-2xl bg-sky-600 text-white flex items-center justify-center shadow-sm shrink-0 mt-0.5">
+                <Waves size={22} />
+              </div>
+              <div>
+                <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-slate-900">
+                  {poolConfig.fullName}
+                </h1>
+                <p className="text-sm text-slate-500 mt-0.5">
+                  {poolConfig.subtitle} • Aktuální obsazenost a statistiky
+                </p>
+              </div>
+            </div>
+
+            <Suspense fallback={<div className="h-10 w-64 bg-slate-100 rounded-xl animate-pulse" />}>
+              <DateFilter />
+            </Suspense>
           </div>
-          <DateFilter />
+
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-3 pt-1">
+            <Suspense fallback={<div className="h-10 w-72 bg-slate-100 rounded-xl animate-pulse" />}>
+              <PoolSelector />
+            </Suspense>
+          </div>
         </header>
 
         {dbError && (
-          <div className="mb-8 p-4 bg-orange-50 border border-orange-200 rounded-lg text-orange-800 flex items-start gap-3 shadow-sm">
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 flex-shrink-0 text-orange-500 mt-0.5" viewBox="0 0 20 20" fill="currentColor">
-              <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
-            </svg>
+          <div className="mb-6 p-4 bg-amber-50 border border-amber-200 rounded-2xl text-amber-900 flex items-start gap-3 shadow-2xs">
+            <AlertTriangle
+              size={20}
+              className="text-amber-600 shrink-0 mt-0.5"
+            />
             <div>
-              <h3 className="font-semibold mb-1">Došlo k chybě databáze</h3>
-              <p className="text-sm">
-                Aplikace pravděpodobně vyčerpala svůj měsíční free limit databázových dotazů, proto se nemohla načíst žádná aktuální ani historická data. Grafy jsou momentálně prázdné.
+              <h2 className="text-sm font-semibold mb-0.5">
+                Došlo k chybě při načítání databáze
+              </h2>
+              <p className="text-xs sm:text-sm text-amber-800">
+                Nepodařilo se načíst aktuální ani historická data (databáze může
+                být dočasně nedostupná nebo byl vyčerpán limit dotazů). Zkuste
+                stránku obnovit za chvíli.
               </p>
             </div>
           </div>
         )}
 
-        <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
-          <aside className="lg:col-span-1 order-2 lg:order-1">
-            <HistorySidebar stats={historyStats} />
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 lg:gap-8">
+          {/* Desktop Left Sidebar */}
+          <aside className="hidden lg:block lg:col-span-3">
+            <Suspense fallback={null}>
+              <HistorySidebar
+                stats={historyStats}
+                variant="sidebar"
+                capacity={poolConfig.capacity}
+              />
+            </Suspense>
           </aside>
 
-          <div className="lg:col-span-3 order-1 lg:order-2 space-y-8">
-            <section>
-              <CurrentStatus latestRecord={latestRecord} />
+          {/* Main Content */}
+          <div className="lg:col-span-9 space-y-5 sm:space-y-6 min-w-0">
+            <section aria-label="Aktuální stav">
+              <CurrentStatus
+                poolId={poolId}
+                nowMs={new Date().getTime()}
+                latestRecord={latestRecord}
+                previousRecord={previousRecord}
+                comparedPool={
+                  comparePoolId
+                    ? {
+                        poolId: comparePoolId,
+                        latestRecord: comparedPoolLatest,
+                      }
+                    : null
+                }
+              />
             </section>
 
-            <section>
+            {/* Mobile Horizontal History Strip */}
+            <Suspense fallback={null}>
+              <HistorySidebar
+                stats={historyStats}
+                variant="strip"
+                capacity={poolConfig.capacity}
+              />
+            </Suspense>
+
+            {/* Quick Comparison Bar */}
+            <section aria-label="Rychlé porovnání">
+              <Suspense fallback={null}>
+                <QuickCompareBar activeComparisons={activeBadges} />
+              </Suspense>
+            </section>
+
+            {/* Main Occupancy Chart */}
+            <section aria-label="Graf obsazenosti">
+              <OccupancyChart
+                data={mergedChartData}
+                comparisons={comparisonSeries}
+                title={chartTitle}
+                mainSeriesLabel={`${poolConfig.shortName} (${
+                  isToday ? "Dnes" : format(selectedDateNoon, "d.M.", { locale: cs })
+                })`}
+                capacity={poolConfig.capacity}
+              />
+            </section>
+
+            {/* KPI Strip + Hourly & Weekday Analytics */}
+            <section aria-label="Statistiky">
               <StatsSection
                 data={dailyData}
                 comparisons={comparisonData.map((item, index) => ({
                   id: item.id,
                   label: item.label,
-                  color: colors[index % colors.length],
-                  records: item.records
+                  color: COMPARISON_COLORS[index % COMPARISON_COLORS.length],
+                  records: item.records,
                 }))}
+                weekdayAverages={weekdayAverages}
+                selectedWeekday={getPragueDayOfWeek(selectedDateStr)}
+                mainLabel={poolConfig.shortName}
               />
             </section>
 
-            <section>
-              <OccupancyChart
-                data={mergedChartData}
-                comparisons={comparisonSeries}
+            {/* Detailed Table + CSV Export */}
+            <section aria-label="Detailní data">
+              <DataTable
+                data={dailyData}
+                poolId={poolId}
+                dateStr={selectedDateStr}
               />
-            </section>
-
-            <section>
-              <DataTable data={dailyData} />
             </section>
           </div>
         </div>
 
-        <footer className="pt-12 pb-8 flex flex-col items-center gap-4 text-xs text-slate-400">
-          <p>
-            Data jsou sbírána každých 10 minut 6:10 - 12:50.
-          </p>
-          <div className="flex flex-wrap justify-center gap-2 grayscale hover:grayscale-0 transition-all opacity-70 hover:opacity-100">
-            {/* Cron Job Status Badges */}
-            <img src="https://api.cron-job.org/jobs/7098021/0f876e1ba156d2b6/status-7.svg" alt="Cron Job Status" className="h-5" />
-            <img src="https://api.cron-job.org/jobs/7098022/e5cf872b0d84a9d6/status-7.svg" alt="Cron Job Status" className="h-5" />
-            <img src="https://api.cron-job.org/jobs/7098030/8e63d3af76e0af64/status-7.svg" alt="Cron Job Status" className="h-5" />
-
-            {/* Vercel Badge */}
-            <a href="https://vercel.com" target="_blank" rel="noopener noreferrer">
-              <img src="https://img.shields.io/badge/vercel-deployed-000000?style=flat&logo=vercel&logoColor=white" alt="Deployed on Vercel" className="h-5" />
+        {/* Footer */}
+        <footer className="mt-12 pt-8 pb-6 border-t border-slate-200/80 flex flex-col items-center gap-4 text-xs text-slate-400">
+          <p className="text-center">
+            Data se automaticky aktualizují každých 10 minut (časové pásmo
+            Europe/Prague). Zdroje:{" "}
+            <a
+              href={POOLS.nymburk.websiteUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-slate-500 hover:text-sky-600 underline underline-offset-2"
+            >
+              Relaxační centrum Labe
+            </a>{" "}
+            &amp;{" "}
+            <a
+              href={POOLS.mb.websiteUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="text-slate-500 hover:text-sky-600 underline underline-offset-2"
+            >
+              Bazén Sokolovna MB
             </a>
+            .
+          </p>
+          <div className="flex flex-wrap justify-center gap-2 opacity-80 hover:opacity-100 transition-opacity">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src="https://api.cron-job.org/jobs/7098021/0f876e1ba156d2b6/status-7.svg"
+              alt="Cron Job Status - morning"
+              className="h-5"
+            />
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src="https://api.cron-job.org/jobs/7098022/e5cf872b0d84a9d6/status-7.svg"
+              alt="Cron Job Status - day"
+              className="h-5"
+            />
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src="https://api.cron-job.org/jobs/7098030/8e63d3af76e0af64/status-7.svg"
+              alt="Cron Job Status - end"
+              className="h-5"
+            />
           </div>
         </footer>
       </div>

@@ -12,4 +12,6 @@ model OccupancyRecord {
   timestamp     DateTime @default(now())
   poolId        String   @default("nymburk")
   poolCount     Int
+
+  @@index([poolId, timestamp])
 }
